@@ -34,6 +34,42 @@ public class Main {
         int nextJobId = 1;
 
         while (true) {
+            // Automatic reaping before the prompt: display Done lines for exited jobs
+            synchronized (bgJobs) {
+                List<BgJob> snapshot = new ArrayList<>(bgJobs);
+                if (!snapshot.isEmpty()) {
+                    int recentId = -1;
+                    int secondId = -1;
+                    for (BgJob j : snapshot) {
+                        if (j.id > recentId) {
+                            secondId = recentId;
+                            recentId = j.id;
+                        } else if (j.id > secondId) {
+                            secondId = j.id;
+                        }
+                    }
+                    for (BgJob j : snapshot) {
+                        if (j.proc == null || !isProcAlive(j.proc)) {
+                            String marker = " ";
+                            if (j.id == recentId)
+                                marker = "+";
+                            else if (j.id == secondId)
+                                marker = "-";
+                            String status = "Done";
+                            StringBuilder sb = new StringBuilder();
+                            sb.append("[").append(j.id).append("]").append(marker).append("  ");
+                            sb.append(status);
+                            for (int k = status.length(); k < 24; k++)
+                                sb.append(' ');
+                            sb.append(j.cmd);
+                            System.out.println(sb.toString());
+                        }
+                    }
+                    // remove completed jobs
+                    bgJobs.removeIf(j -> j.proc == null || !isProcAlive(j.proc));
+                }
+            }
+
             System.out.print("$ ");
             System.out.flush();
 
@@ -398,7 +434,7 @@ public class Main {
                                     marker = "+";
                                 else if (j.id == secondId)
                                     marker = "-";
-                                String status = (j.proc != null && j.proc.isAlive()) ? "Running" : "Done";
+                                String status = isProcAlive(j.proc) ? "Running" : "Done";
                                 StringBuilder sb = new StringBuilder();
                                 sb.append("[").append(j.id).append("]").append(marker).append("  ");
                                 sb.append(status);
@@ -412,7 +448,7 @@ public class Main {
                                 outStream.println(sb.toString());
                             }
                             // remove completed (Done) jobs from table
-                            bgJobs.removeIf(j -> j.proc == null || !j.proc.isAlive());
+                            bgJobs.removeIf(j -> j.proc == null || !isProcAlive(j.proc));
                         }
                     }
                     if (closeOutStream)
@@ -585,6 +621,17 @@ public class Main {
             }
         }
         return null;
+    }
+
+    private static boolean isProcAlive(Process p) {
+        if (p == null)
+            return false;
+        try {
+            p.exitValue();
+            return false;
+        } catch (IllegalThreadStateException e) {
+            return true;
+        }
     }
 
     private static String[] splitArgs(String input) {
