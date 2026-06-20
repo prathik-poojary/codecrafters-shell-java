@@ -455,7 +455,177 @@ public class Main {
                         outStream.close();
                     continue;
                 }
-                // Not a builtin; try to locate executable in PATH
+                // Not a builtin; handle pipelines or run executable in PATH
+                // detect simple pipeline with a single '|'
+                int pipeIndex = -1;
+                for (int ii = 0; ii < parts.length; ii++) {
+                    if (parts[ii].equals("|")) {
+                        pipeIndex = ii;
+                        break;
+                    }
+                }
+                if (pipeIndex >= 0) {
+                    String[] left = Arrays.copyOfRange(parts, 0, pipeIndex);
+                    String[] right = Arrays.copyOfRange(parts, pipeIndex + 1, parts.length);
+                    String leftExe = findInPath(left[0]);
+                    String rightExe = findInPath(right[0]);
+                    if (leftExe == null) {
+                        outStream.println(left[0] + ": command not found");
+                        if (closeOutStream)
+                            outStream.close();
+                        continue;
+                    }
+                    if (rightExe == null) {
+                        outStream.println(right[0] + ": command not found");
+                        if (closeOutStream)
+                            outStream.close();
+                        continue;
+                    }
+
+                    try {
+                        ProcessBuilder pb1 = new ProcessBuilder(Arrays.asList(left));
+                        ProcessBuilder pb2 = new ProcessBuilder(Arrays.asList(right));
+                        pb1.directory(new File(currentDir));
+                        pb2.directory(new File(currentDir));
+                        if (redirectStderr != null) {
+                            if (appendStderr)
+                                pb1.redirectError(ProcessBuilder.Redirect.appendTo(redirectStderr));
+                            else
+                                pb1.redirectError(redirectStderr);
+                            if (appendStderr)
+                                pb2.redirectError(ProcessBuilder.Redirect.appendTo(redirectStderr));
+                            else
+                                pb2.redirectError(redirectStderr);
+                        }
+
+                        Process p1 = pb1.start();
+                        Process p2 = pb2.start();
+
+                        // pump p1.stdout -> p2.stdin
+                        Thread pump = new Thread(
+                                () -> {
+                                    try (InputStream is = p1.getInputStream();
+                                            OutputStream os = p2.getOutputStream()) {
+                                        byte[] buf = new byte[1024];
+                                        int r;
+                                        while ((r = is.read(buf)) != -1) {
+                                            os.write(buf, 0, r);
+                                            os.flush();
+                                        }
+                                        try {
+                                            os.close();
+                                        } catch (Exception ex) {
+                                        }
+                                    } catch (Exception e) {
+                                    }
+                                });
+                        pump.setDaemon(true);
+                        pump.start();
+
+                        // forward stderr streams if not redirected
+                        if (redirectStderr == null) {
+                            Thread e1 = new Thread(
+                                    () -> {
+                                        try (InputStream es = p1.getErrorStream()) {
+                                            byte[] b = new byte[1024];
+                                            int n;
+                                            OutputStream os = System.out;
+                                            while ((n = es.read(b)) != -1) {
+                                                os.write(b, 0, n);
+                                                os.flush();
+                                            }
+                                        } catch (Exception ex) {
+                                        }
+                                    });
+                            e1.setDaemon(true);
+                            e1.start();
+                            Thread e2 = new Thread(
+                                    () -> {
+                                        try (InputStream es = p2.getErrorStream()) {
+                                            byte[] b = new byte[1024];
+                                            int n;
+                                            OutputStream os = System.out;
+                                            while ((n = es.read(b)) != -1) {
+                                                os.write(b, 0, n);
+                                                os.flush();
+                                            }
+                                        } catch (Exception ex) {
+                                        }
+                                    });
+                            e2.setDaemon(true);
+                            e2.start();
+                        }
+
+                        if (background) {
+                            int jid;
+                            synchronized (bgJobs) {
+                                int maxId = 0;
+                                for (BgJob existing : bgJobs)
+                                    if (existing.id > maxId)
+                                        maxId = existing.id;
+                                jid = maxId + 1;
+                                bgJobs.add(
+                                        new BgJob(
+                                                jid,
+                                                p2,
+                                                String.join(" ", left)
+                                                        + " | "
+                                                        + String.join(" ", right)));
+                            }
+                            System.out.println("[" + jid + "] " + p2.pid());
+                            System.out.flush();
+
+                            // background: stream p2 stdout to terminal in daemon thread
+                            Thread outt = new Thread(
+                                    () -> {
+                                        try (InputStream is = p2.getInputStream()) {
+                                            byte[] b = new byte[1024];
+                                            int n;
+                                            OutputStream os = System.out;
+                                            while ((n = is.read(b)) != -1) {
+                                                os.write(b, 0, n);
+                                                os.flush();
+                                            }
+                                        } catch (Exception ex) {
+                                        }
+                                    });
+                            outt.setDaemon(true);
+                            outt.start();
+
+                        } else {
+                            // foreground: stream p2 stdout to chosen outStream
+                            try (InputStream is = p2.getInputStream()) {
+                                byte[] buf = new byte[1024];
+                                int r;
+                                while ((r = is.read(buf)) != -1) {
+                                    outStream.write(buf, 0, r);
+                                    outStream.flush();
+                                }
+                            } catch (Exception ex) {
+                            }
+                            // wait for p2, then ensure p1 is stopped
+                            p2.waitFor();
+                            if (p1.isAlive()) {
+                                try {
+                                    p1.destroy();
+                                } catch (Exception ex) {
+                                }
+                                try {
+                                    p1.waitFor();
+                                } catch (Exception ex) {
+                                }
+                            }
+                        }
+                        if (closeOutStream)
+                            outStream.close();
+                    } catch (Exception e) {
+                        outStream.println("command not found");
+                        if (closeOutStream)
+                            outStream.close();
+                    }
+                    continue;
+                }
+
                 // reuse parsed parts/cmd
                 String exePath = findInPath(cmd);
                 if (exePath != null) {
