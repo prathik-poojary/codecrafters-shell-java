@@ -1,309 +1,237 @@
 import java.io.File;
-import java.util.Scanner;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.*;
 
 public class Main {
-
-    public static String findExecutable(String command) {
-
-        String pathEnv = System.getenv("PATH");
-
-        if (pathEnv == null) {
-            return null;
-        }
-
-        String[] paths = pathEnv.split(File.pathSeparator);
-
-        for (String path : paths) {
-
-            File file = new File(path, command);
-
-            if (file.exists() && file.canExecute()) {
-                return file.getAbsolutePath();
-            }
-        }
-
-        return null;
-    }
-
-    public static java.util.List<String> parseCommand(String input) {
-
-        java.util.List<String> tokens = new java.util.ArrayList<>();
-
-        StringBuilder current = new StringBuilder();
-
-        boolean inSingleQuotes = false;
-        boolean inDoubleQuotes = false;
-
-        for (int i = 0; i < input.length(); i++) {
-
-            char c = input.charAt(i);
-
-            // Backslash escaping outside quotes
-            if (c == '\\' && !inSingleQuotes && !inDoubleQuotes) {
-
-                if (i + 1 < input.length()) {
-                    current.append(input.charAt(i + 1));
-                    i++;
-                }
-            } else if (c == '\'' && !inDoubleQuotes) {
-                inSingleQuotes = !inSingleQuotes;
-            } else if (inDoubleQuotes && c == '\\') {
-
-                if (i + 1 < input.length()) {
-
-                    char next = input.charAt(i + 1);
-
-                    if (next == '"' || next == '\\') {
-                        current.append(next);
-                        i++;
-                    } else {
-                        current.append('\\');
-                    }
-                } else {
-                    current.append('\\');
-                }
-            } else if (c == '"' && !inSingleQuotes) {
-                inDoubleQuotes = !inDoubleQuotes;
-            } else if (Character.isWhitespace(c) && !inSingleQuotes && !inDoubleQuotes) {
-
-                if (current.length() > 0) {
-                    tokens.add(current.toString());
-                    current.setLength(0);
-                }
-            } else {
-                current.append(c);
-            }
-        }
-
-        if (current.length() > 0) {
-            tokens.add(current.toString());
-        }
-
-        return tokens;
-    }
-
     public static void main(String[] args) throws Exception {
-
-        Scanner scanner = new Scanner(System.in);
-
-        String currentDirectory = System.getProperty("user.dir");
-
+        Scanner sc = new Scanner(System.in);
+        Set<String> set = new HashSet<>();
+        set.add("exit");
+        set.add("echo");
+        set.add("type");
+        set.add("pwd");
+        set.add("cd");
+        set.add("jobs");
         while (true) {
-
             System.out.print("$ ");
-
-            String command = scanner.nextLine();
-
-            boolean stdoutRedirect = false;
-            boolean stderrRedirect = false;
-            boolean stdoutAppend = false;
-            boolean stderrAppend = false;
-
-            String outputFile = null;
-
-            java.util.List<String> tokens = parseCommand(command);
-            StringBuilder output = new StringBuilder();
-
-            for (int i = 0; i < tokens.size(); i++) {
-                if (tokens.get(i).equals(">") || tokens.get(i).equals("1>")) {
-
-                    stdoutRedirect = true;
-                    outputFile = tokens.get(i + 1);
-
-                    tokens = new java.util.ArrayList<>(tokens.subList(0, i));
-
-                    break;
-                } else if (tokens.get(i).equals(">>") || tokens.get(i).equals("1>>")) {
-
-                    stdoutAppend = true;
-                    outputFile = tokens.get(i + 1);
-
-                    tokens = new java.util.ArrayList<>(tokens.subList(0, i));
-
-                    break;
-                } else if (tokens.get(i).equals("2>")) {
-
-                    stderrRedirect = true;
-                    outputFile = tokens.get(i + 1);
-
-                    tokens = new java.util.ArrayList<>(tokens.subList(0, i));
-
-                    break;
-                } else if (tokens.get(i).equals("2>>")) {
-
-                    stderrAppend = true;
-                    outputFile = tokens.get(i + 1);
-
-                    tokens = new java.util.ArrayList<>(tokens.subList(0, i));
-
+            String input = sc.nextLine().trim();
+            if (input.isEmpty())
+                continue;
+            String targetFilePath = "";
+            boolean isAppend = false, isError = false, foundPath = false, isBackground = false;
+            List<String> parsedInput = parseInput(input);
+            int parsedInputSize = parsedInput.size();
+            if (parsedInput.get(parsedInputSize - 1).equals("&")) {
+                isBackground = true;
+                parsedInput.remove(parsedInputSize - 1);
+            }
+            Set<String> validSTDOperators = new HashSet<>();
+            validSTDOperators.add(">");
+            validSTDOperators.add(">>");
+            validSTDOperators.add("1>");
+            validSTDOperators.add("1>>");
+            validSTDOperators.add("2>");
+            validSTDOperators.add("2>>");
+            for (int i = parsedInput.size() - 1; i >= 0; i--) {
+                String currentToken = parsedInput.get(i);
+                if (validSTDOperators.contains(currentToken)) {
+                    targetFilePath = parsedInput.get(i + 1);
+                    foundPath = true;
+                    isAppend = currentToken.endsWith(">>");
+                    isError = currentToken.startsWith("2");
+                    parsedInput.remove(i + 1);
+                    parsedInput.remove(i);
                     break;
                 }
             }
-
-            if (command.equals("exit")) {
+            if (foundPath) {
+                Path path = Path.of(targetFilePath);
+                if (isAppend) {
+                    Files.writeString(
+                            path, "", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                } else {
+                    Files.writeString(
+                            path,
+                            "",
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.TRUNCATE_EXISTING);
+                }
+            }
+            String command = parsedInput.get(0);
+            String arguments = parsedInput.size() > 1 ? parsedInput.get(1) : "";
+            if (command.equals("exit"))
                 break;
-            } else if (command.equals("pwd")) {
-
-                if (stdoutRedirect) {
-
-                    java.nio.file.Files.writeString(
-                            java.nio.file.Paths.get(outputFile),
-                            currentDirectory + System.lineSeparator());
-
-                } else if (stderrRedirect) {
-
-                    new File(outputFile).createNewFile();
-                    System.out.println(currentDirectory);
-
+            else if (command.equals("echo"))
+                writeOutput(
+                        String.join(" ", parsedInput.subList(1, parsedInput.size())),
+                        foundPath,
+                        targetFilePath,
+                        isAppend,
+                        isError);
+            else if (command.equals("jobs"))
+                continue;
+            else if (command.equals("pwd")) {
+                writeOutput(
+                        System.getProperty("user.dir"),
+                        foundPath,
+                        targetFilePath,
+                        isAppend,
+                        isError);
+            } else if (command.equals("cd")) {
+                Path targetPath;
+                if (arguments.equals("~")) {
+                    targetPath = Path.of(System.getenv("HOME"));
+                } else if (Path.of(arguments).isAbsolute()) {
+                    targetPath = Path.of(arguments).normalize();
                 } else {
-
-                    System.out.println(currentDirectory);
-                }
-            } else if (command.startsWith("cd ")) {
-
-                String path = command.substring(3);
-
-                if (path.equals("~")) {
-
-                    currentDirectory = System.getenv("HOME");
-
-                } else {
-
-                    File dir;
-
-                    if (path.startsWith("/")) {
-                        dir = new File(path);
-                    } else {
-                        dir = new File(currentDirectory, path);
-                    }
-
-                    if (dir.exists() && dir.isDirectory()) {
-                        currentDirectory = dir.getCanonicalPath();
-                    } else {
-                        System.out.println("cd: " + path + ": No such file or directory");
-                    }
-                }
-            } else if (command.startsWith("type ")) {
-
-                String cmd = command.substring(5);
-
-                if (cmd.equals("echo")
-                        || cmd.equals("exit")
-                        || cmd.equals("type")
-                        || cmd.equals("pwd")
-                        || cmd.equals("cd")) {
-
-                    System.out.println(cmd + " is a shell builtin");
-                } else {
-
-                    String executablePath = findExecutable(cmd);
-
-                    if (executablePath != null) {
-                        System.out.println(cmd + " is " + executablePath);
-                    } else {
-                        System.out.println(cmd + ": not found");
-                    }
-                }
-            } else if (command.startsWith("echo")) {
-
-                java.util.List<String> parts = tokens;
-
-                output.setLength(0);
-
-                for (int i = 1; i < parts.size(); i++) {
-
-                    if (i > 1) {
-                        output.append(" ");
-                    }
-
-                    output.append(parts.get(i));
+                    Path currentPath = Path.of(System.getProperty("user.dir"));
+                    targetPath = currentPath.resolve(arguments).normalize();
                 }
 
-                if (stdoutRedirect) {
-
-                    java.nio.file.Files.writeString(
-                            java.nio.file.Paths.get(outputFile),
-                            output.toString() + System.lineSeparator());
-
-                } else if (stdoutAppend) {
-
-                    java.nio.file.Files.writeString(
-                            java.nio.file.Paths.get(outputFile),
-                            output.toString() + System.lineSeparator(),
-                            java.nio.file.StandardOpenOption.CREATE,
-                            java.nio.file.StandardOpenOption.APPEND);
-
-                } else if (stderrRedirect) {
-
-                    new File(outputFile).createNewFile();
-
-                    System.out.println(output);
-
+                if (Files.exists(targetPath) && Files.isDirectory(targetPath)) {
+                    System.setProperty("user.dir", targetPath.normalize().toString());
                 } else {
-
-                    System.out.println(output);
+                    writeOutput(
+                            "cd: " + arguments + ": No such file or directory",
+                            foundPath,
+                            targetFilePath,
+                            isAppend,
+                            isError);
+                }
+            } else if (command.equals("type")) {
+                if (set.contains(arguments))
+                    writeOutput(
+                            arguments + " is a shell builtin",
+                            foundPath,
+                            targetFilePath,
+                            isAppend,
+                            isError);
+                else {
+                    String path = System.getenv("PATH");
+                    if (path != null && !path.isEmpty()) {
+                        String[] directories = path.split(File.pathSeparator);
+                        hasPath(
+                                directories,
+                                arguments,
+                                foundPath,
+                                targetFilePath,
+                                isAppend,
+                                isError);
+                    }
                 }
             } else {
-
-                java.util.List<String> parts = tokens;
-
-                if (parts.isEmpty()) {
-                    continue;
+                ProcessBuilder processBuilder = new ProcessBuilder(parsedInput);
+                processBuilder.inheritIO();
+                if (foundPath) {
+                    File myFile = new File(targetFilePath);
+                    ProcessBuilder.Redirect redirect;
+                    if (isAppend)
+                        redirect = ProcessBuilder.Redirect.appendTo(myFile);
+                    else
+                        redirect = ProcessBuilder.Redirect.to(myFile);
+                    if (isError)
+                        processBuilder.redirectError(redirect);
+                    else
+                        processBuilder.redirectOutput(redirect);
                 }
-
-                String executablePath = findExecutable(parts.get(0));
-
-                if (executablePath != null) {
-
-                    java.util.List<String> processArgs = new java.util.ArrayList<>();
-
-                    processArgs.add(parts.get(0));
-
-                    for (int i = 1; i < parts.size(); i++) {
-                        processArgs.add(parts.get(i));
-                    }
-
-                    ProcessBuilder pb = new ProcessBuilder(processArgs);
-
-                    pb.directory(new File(currentDirectory));
-
-                    if (stdoutRedirect) {
-
-                        pb.redirectOutput(new File(outputFile));
-                        pb.redirectError(ProcessBuilder.Redirect.INHERIT);
-
-                    } else if (stdoutAppend) {
-
-                        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(new File(outputFile)));
-                        pb.redirectError(ProcessBuilder.Redirect.INHERIT);
-
-                    } else if (stderrRedirect) {
-
-                        pb.redirectError(new File(outputFile));
-                        pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
-
-                    } else if (stderrAppend) {
-
-                        pb.redirectError(ProcessBuilder.Redirect.appendTo(new File(outputFile)));
-
-                        pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
-
-                    } else {
-
-                        pb.inheritIO();
-                    }
-
-                    Process process = pb.start();
-
-                    process.waitFor();
-
-                } else {
-
-                    System.out.println(command + ": command not found");
+                try {
+                    Process process = processBuilder.start();
+                    if (!isBackground)
+                        process.waitFor();
+                } catch (java.io.IOException e) {
+                    writeOutput(
+                            command + ": command not found",
+                            foundPath,
+                            targetFilePath,
+                            isAppend,
+                            isError);
                 }
             }
         }
+    }
 
-        scanner.close();
+    private static void writeOutput(
+            String content,
+            boolean foundPath,
+            String targetFilePath,
+            boolean isAppend,
+            boolean isError)
+            throws Exception {
+        if (foundPath && !isError) {
+            Path path = Path.of(targetFilePath);
+            if (isAppend)
+                Files.writeString(
+                        path, content + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            else
+                Files.writeString(
+                        path,
+                        content + "\n",
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING);
+        } else {
+            System.out.println(content);
+        }
+    }
+
+    private static void hasPath(
+            String[] directories,
+            String arguments,
+            boolean foundPath,
+            String targetFilePath,
+            boolean isAppend,
+            boolean isError)
+            throws Exception {
+        boolean found = false;
+        for (String dir : directories) {
+            Path fullPath = Path.of(dir, arguments);
+            if (Files.exists(fullPath) && Files.isExecutable(fullPath)) {
+                writeOutput(
+                        arguments + " is " + fullPath.toString(),
+                        foundPath,
+                        targetFilePath,
+                        isAppend,
+                        isError);
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            writeOutput(arguments + ": not found", foundPath, targetFilePath, isAppend, isError);
+    }
+
+    private static List<String> parseInput(String input) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder currentToken = new StringBuilder();
+        boolean isSingleQuote = false, isDoubleQuote = false, escapeNext = false;
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (escapeNext) {
+                if (isDoubleQuote && c != '"' && c != '\\' && c != '$') {
+                    currentToken.append('\\');
+                    currentToken.append(c);
+                } else
+                    currentToken.append(c);
+                escapeNext = false;
+                continue;
+            }
+            if (c == '\\' && !isSingleQuote)
+                escapeNext = true;
+            else if (c == '\'' && !isDoubleQuote)
+                isSingleQuote = !isSingleQuote;
+            else if (c == '\"' && !isSingleQuote)
+                isDoubleQuote = !isDoubleQuote;
+            else if (c == ' ' && !isSingleQuote && !isDoubleQuote) {
+                if (!currentToken.isEmpty()) {
+                    tokens.add(currentToken.toString());
+                    currentToken.setLength(0);
+                }
+            } else
+                currentToken.append(c);
+        }
+        if (!currentToken.isEmpty())
+            tokens.add(currentToken.toString());
+        return tokens;
     }
 }
