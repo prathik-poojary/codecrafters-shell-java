@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class Parser {
+public final class Main {
     public static List<String> parseArgs(String input) {
         final Pattern commandPattern = Pattern.compile("^\\s*(\\S+)");
 
