@@ -1,216 +1,134 @@
-import java.io.*;
-import java.util.*;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Scanner;
+import java.util.Set;
 
 public class Main {
-    private static String currentDirectory = System.getProperty("user.dir");
-
+    @SuppressWarnings("resource")
     public static void main(String[] args) throws Exception {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-
+        Scanner sc = new Scanner(System.in);
+        String currentDirectory = System.getProperty("user.dir");
+        Set<String> builtins = Set.of("echo", "exit", "type", "pwd", "cd");
         while (true) {
             System.out.print("$ ");
-            System.out.flush();
-
-            String command = reader.readLine();
-            if (command == null)
+            String input = sc.nextLine();
+            if (input.equals("exit")) {
                 break;
-
-            command = command.trim();
-            if (command.isEmpty())
-                continue;
-
-            // Use quote-aware tokenizer instead of simple split
-            List<String> tokens = parseArgs(command);
-            if (tokens.isEmpty())
-                continue;
-
-            String cmd = tokens.get(0);
-            String[] parts = tokens.toArray(new String[0]);
-
-            if (cmd.equals("exit")) {
-                System.exit(parts.length > 1 ? Integer.parseInt(parts[1]) : 0);
-
-            } else if (cmd.equals("echo")) {
-                // Join all arguments after "echo" with a single space
-                StringBuilder sb = new StringBuilder();
-                for (int i = 1; i < parts.length; i++) {
-                    if (i > 1)
-                        sb.append(' ');
-                    sb.append(parts[i]);
-                }
-                System.out.println(sb.toString());
-                System.out.flush();
-
-            } else if (cmd.equals("pwd")) {
+            } else if (input.equals("pwd")) {
                 System.out.println(currentDirectory);
-                System.out.flush();
-
-            } else if (cmd.equals("type")) {
-                if (parts.length >= 2) {
-                    handleType(parts[1]);
-                }
-                System.out.flush();
-
-            } else if (cmd.equals("cd")) {
-                if (parts.length >= 2) {
-                    handleCd(parts[1]);
-                }
-                System.out.flush();
-
-            } else {
-                handleExternal(parts);
-                System.out.flush();
-            }
-        }
-    }
-
-    /**
-     * Tokenizes a shell command line respecting single-quote and double-quote
-     * rules: - Inside
-     * single quotes: every character is literal (no special meaning at all). -
-     * Inside double
-     * quotes: most characters are literal; spaces preserved; single quotes inside
-     * are literal. -
-     * Adjacent quoted/unquoted segments are concatenated into one token. - Outside
-     * quotes,
-     * whitespace separates tokens.
-     */
-    private static List<String> parseArgs(String line) {
-        List<String> tokens = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inSingleQuote = false;
-        boolean inDoubleQuote = false;
-        boolean hasToken = false;
-
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-
-            if (inSingleQuote) {
-                if (c == '\'') {
-                    inSingleQuote = false;
+            } else if (input.startsWith("cd ")) {
+                String directory = input.substring(3);
+                if (directory.equals("~")) {
+                    currentDirectory = System.getenv("HOME");
                 } else {
-                    current.append(c);
-                    hasToken = true;
-                }
-            } else if (inDoubleQuote) {
-                if (c == '"') {
-                    inDoubleQuote = false;
-                } else if (c == '\\' && i + 1 < line.length()) {
-                    char next = line.charAt(i + 1);
-                    if (next == '"' || next == '\\') {
-                        // \\" → " and \\\\ → \ inside double quotes
-                        i++;
-                        current.append(next);
+                    File dir;
+                    if (directory.startsWith("/")) {
+                        dir = new File(directory);
                     } else {
-                        // Backslash is literal for any other character inside double quotes
+                        dir = new File(currentDirectory, directory);
+                    }
+                    if (dir.exists() && dir.isDirectory()) {
+                        currentDirectory = dir.getCanonicalPath();
+                    } else {
+                        System.out.println("cd: " + directory + ": No such file or directory");
+                    }
+                }
+            } else if (input.startsWith("type")) {
+                String cmd = input.substring(5);
+                if (builtins.contains(cmd)) {
+                    System.out.println(cmd + " is a shell builtin");
+                } else {
+                    String pathEnv = System.getenv("PATH");
+                    String directories[] = pathEnv.split(File.pathSeparator);
+                    boolean found = false;
+                    for (String dir : directories) {
+                        File file = new File(dir, cmd);
+                        if (file.exists() && file.canExecute()) {
+                            System.out.println(cmd + " is " + file.getAbsolutePath());
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        System.out.println(cmd + ": not found ");
+                }
+            } else {
+                List<String> parts = new ArrayList<>();
+                StringBuilder current = new StringBuilder();
+                boolean inSingleQuote = false;
+                boolean inDoubleQuote = false;
+                for (int i = 0; i < input.length(); i++) {
+                    char c = input.charAt(i);
+                    if (c == '\\' && !inSingleQuote && !inDoubleQuote) {
+                        if (i + 1 < input.length()) {
+                            current.append(input.charAt(i + 1));
+                            i++;
+                        }
+                    } else if (inDoubleQuote && c == '\\') {
+                        if (i + 1 < input.length()) {
+                            char next = input.charAt(i + 1);
+                            if (next == '"' || next == '\\') {
+                                current.append(next);
+                                i++;
+                                continue;
+                            } else {
+                                current.append('\\');
+                                continue;
+                            }
+                        }
+                    } else if (c == '\'' && !inDoubleQuote) {
+                        inSingleQuote = !inSingleQuote;
+                    } else if (c == '"' && !inSingleQuote) {
+                        inDoubleQuote = !inDoubleQuote;
+                    } else if (c == ' ' && !inSingleQuote && !inDoubleQuote) {
+                        if (current.length() > 0) {
+                            parts.add(current.toString());
+                            current.setLength(0);
+                        }
+
+                    } else {
                         current.append(c);
                     }
-                    hasToken = true;
-                } else {
-                    current.append(c);
-                    hasToken = true;
                 }
-            } else {
-                if (c == '\\') {
-                    // Backslash outside quotes: next char is literal, backslash dropped
-                    if (i + 1 < line.length()) {
-                        i++;
-                        current.append(line.charAt(i));
-                        hasToken = true;
+                if (current.length() > 0) {
+                    parts.add(current.toString());
+                }
+                String redirectFile = null;
+                for (int i = 0; i < parts.size(); i++) {
+                    String token = parts.get(i);
+                    if (token.equals(">") || token.equals("1>")) {
+                        redirectFile = parts.get(i + 1);
+                        parts.remove(i + 1);
+                        parts.remove(i);
+                        break;
                     }
-                } else if (c == '\'') {
-                    inSingleQuote = true;
-                    hasToken = true; // even empty '' counts as a token start
-                } else if (c == '"') {
-                    inDoubleQuote = true;
-                    hasToken = true; // even empty "" counts as a token start
-                } else if (c == ' ' || c == '\t') {
-                    if (hasToken) {
-                        tokens.add(current.toString());
-                        current.setLength(0);
-                        hasToken = false;
+                }
+                String command = parts.get(0);
+                String pathEnv = System.getenv("PATH");
+                String directories[] = pathEnv.split(File.pathSeparator);
+                File executable = null;
+                for (String dir : directories) {
+                    File file = new File(dir, command);
+                    if (file.exists() && file.canExecute()) {
+                        executable = file;
+                        break;
                     }
+                }
+                if (executable != null) {
+                    ProcessBuilder pb = new ProcessBuilder(parts);
+                    if (redirectFile == null) {
+                        pb.inheritIO();
+                    } else {
+                        pb.redirectOutput(new File(redirectFile));
+                        pb.redirectError(ProcessBuilder.Redirect.INHERIT);
+                    }
+                    Process p = pb.start();
+                    p.waitFor();
                 } else {
-                    current.append(c);
-                    hasToken = true;
+                    System.out.println(input + ": command not found");
                 }
             }
         }
-
-        if (hasToken) {
-            tokens.add(current.toString());
-        }
-
-        return tokens;
-    }
-
-    private static void handleCd(String path) {
-        File dir;
-
-        if (path.equals("~")) {
-            String home = System.getenv("HOME");
-            if (home == null)
-                home = System.getProperty("user.home");
-            dir = new File(home);
-        } else if (path.startsWith("/")) {
-            dir = new File(path);
-        } else {
-            dir = new File(currentDirectory, path);
-        }
-
-        try {
-            dir = dir.getCanonicalFile();
-        } catch (IOException e) {
-            System.out.println("cd: " + path + ": No such file or directory");
-            return;
-        }
-
-        if (dir.exists() && dir.isDirectory()) {
-            currentDirectory = dir.getAbsolutePath();
-        } else {
-            System.out.println("cd: " + path + ": No such file or directory");
-        }
-    }
-
-    private static void handleType(String arg) {
-        Set<String> builtins = new HashSet<>(Arrays.asList("echo", "exit", "type", "pwd", "cd"));
-        if (builtins.contains(arg)) {
-            System.out.println(arg + " is a shell builtin");
-            return;
-        }
-
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv != null) {
-            for (String dir : pathEnv.split(File.pathSeparator)) {
-                File file = new File(dir, arg);
-                if (file.isFile() && file.canExecute()) {
-                    System.out.println(arg + " is " + file.getAbsolutePath());
-                    return;
-                }
-            }
-        }
-        System.out.println(arg + ": not found");
-    }
-
-    private static void handleExternal(String[] parts) throws Exception {
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv == null) {
-            System.out.println(parts[0] + ": command not found");
-            return;
-        }
-
-        for (String dir : pathEnv.split(File.pathSeparator)) {
-            File file = new File(dir, parts[0]);
-            if (file.isFile() && file.canExecute()) {
-                List<String> cmd = new ArrayList<>(Arrays.asList(parts));
-                ProcessBuilder pb = new ProcessBuilder(cmd);
-                pb.directory(new File(currentDirectory));
-                pb.environment().put("PATH", pathEnv);
-                pb.inheritIO();
-                pb.start().waitFor();
-                return;
-            }
-        }
-        System.out.println(parts[0] + ": command not found");
     }
 }
