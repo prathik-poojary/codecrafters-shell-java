@@ -1,81 +1,70 @@
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Scanner;
-import java.util.function.Consumer;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
 public class Main {
+    public static void main(String[] args) throws Exception {
+        boolean exit = false;
+        Scanner scanner = new Scanner(System.in);
+        String cwd = System.getProperty("user.dir");
+        while (!exit) {
+            System.out.print("$ ");
+            String input = scanner.nextLine();
 
-    private static final Map<String, Consumer<List<String>>> BUILTINS = new HashMap<>();
+            String[] words = input.split(" ");
+            String command = words[0];
+            String[] rest = Arrays.copyOfRange(words, 1, words.length);
+            String result = String.join(" ", rest);
 
-    static {
-        BUILTINS.put("exit", args -> System.exit(0));
-        BUILTINS.put("echo", args -> System.out.println(String.join(" ", args)));
-        BUILTINS.put("type", args -> handleType(args.get(0), BUILTINS));
-        BUILTINS.put("pwd", args -> System.out.println(System.getProperty("user.dir")));
+            if (Objects.equals(command, "exit"))
+                exit = true;
+            else if (Objects.equals(command, "echo"))
+                System.out.println(result);
+            else if (Objects.equals(command, "type"))
+                System.out.println(type(result));
+            else if (Objects.equals(command, "pwd"))
+                System.out.println(cwd);
+            else if (Objects.equals(command, "cd")) {
+                File file = new File(result);
+                if (file.isDirectory() && file.isAbsolute())
+                    cwd = file.getAbsolutePath();
+                else
+                    System.out.println("cd: " + result + ": No such file or directory");
+            } else if (getExecutable(command) != null) {
+                Process process = Runtime.getRuntime().exec(input.split(" "));
+                process.getInputStream().transferTo(System.out);
+            } else
+                System.out.println(input + ": command not found");
+        }
+        scanner.close();
     }
 
-    private static String findInPath(String command) {
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv != null) {
-            for (String dir : pathEnv.split(":")) {
-                Path candidate = Paths.get(dir, command);
-                if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
-                    return candidate.toAbsolutePath().toString();
-                }
+    public static String type(String command) {
+        String[] commands = { "exit", "echo", "type", "pwd", "cd" };
+        String path_commands = System.getenv("PATH");
+        String[] path_command = path_commands.split(":");
+        for (String text : commands) {
+            if (Objects.equals(text, command))
+                return command + " is a shell builtin";
+        }
+        for (String path : path_command) {
+            File file = new File(path, command);
+            if (file.exists() && file.canExecute()) {
+                return command + " is " + file.getAbsolutePath();
+            }
+        }
+        return command + ": not found";
+    }
+
+    public static String getExecutable(String command) {
+        String path_commands = System.getenv("PATH");
+        String[] path_command = path_commands.split(":");
+        for (String path : path_command) {
+            File file = new File(path, command);
+            if (file.exists() && file.canExecute()) {
+                return file.getAbsolutePath();
             }
         }
         return null;
-    }
-
-    private static void handleType(String command, Map<String, Consumer<List<String>>> builtIns) {
-        if (builtIns.containsKey(command)) {
-            System.out.println(command + " is a shell builtin");
-        } else {
-            String result = findInPath(command);
-            if (result != null) {
-                System.out.println(command + " is " + result);
-            } else {
-                System.out.println(command + ": not found");
-            }
-        }
-    }
-
-    public static void main(String[] args) throws Exception {
-
-        System.out.print("$ ");
-
-        try (Scanner scanner = new Scanner(System.in)) {
-
-            while (true) {
-                String input = scanner.nextLine();
-
-                String[] parts = input.split("\\s+");
-                String command = parts[0];
-
-                if (BUILTINS.containsKey(command)) {
-                    List<String> cmdArgs = Arrays.asList(Arrays.copyOfRange(parts, 1, parts.length));
-                    BUILTINS.get(command).accept(cmdArgs);
-                } else {
-                    String executable = findInPath(parts[0]);
-                    if (executable != null) {
-                        ProcessBuilder pb = new ProcessBuilder(parts);
-                        pb.inheritIO();
-                        Process p = pb.start();
-                        p.waitFor();
-                    } else {
-                        System.out.println(input + ": command not found");
-                    }
-                }
-
-                System.out.print("$ ");
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
     }
 }
